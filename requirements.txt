@@ -1,0 +1,5 @@
+streamlit>=1.30
+edge-tts>=7.0
+piper-tts>=1.2
+requests>=2.31
+aiohttp>=3.9
