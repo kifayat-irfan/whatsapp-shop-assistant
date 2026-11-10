@@ -240,39 +240,23 @@ def main() -> None:
                     autoplay=True,
                 )
 
-    # --- Voice input (optional: needs a Groq key) ----------------------
+    # --- Message input row, WhatsApp-style (Step 2) -----------------------
+    # One row: text field | mic button | send button. The mic is Streamlit's
+    # native audio input sitting next to the message box, like WhatsApp.
+    # Sending still goes through the plain _respond(). This step only moves
+    # the mic into the row: if Cloud hangs after this step, the culprit is
+    # the audio_input-in-columns placement; if it answers, the full row is
+    # safe (the earlier hang then points at the resumable-reply logic,
+    # which is NOT present here).
     groq_key = _secret("GROQ_API_KEY")
     voice_on = groq_key_available(groq_key)
-    if voice_on:
-        audio = st.audio_input("🎙️ Speak to the assistant")
-        if audio is not None:
-            raw = audio.getvalue()
-            digest = hashlib.sha256(raw).hexdigest()
-            if digest != st.session_state.last_audio_hash:
-                st.session_state.last_audio_hash = digest
-                st.session_state.status = "Listening…"
-                try:
-                    with st.spinner("Listening…"):
-                        heard = transcribe_audio(raw, groq_key=groq_key)
-                except Exception as exc:  # noqa: BLE001
-                    st.error(str(exc))
-                else:
-                    if heard:
-                        _respond(heard)
-                st.rerun()
-    else:
+    if not voice_on:
         st.info(
             "Voice input needs a Groq API key, which is not configured on this VM — "
             "so the microphone is off. Type your message below instead: the assistant "
             "works fully in text mode, with the same voice replies."
         )
 
-    # --- Text input row (Step 1 of the WhatsApp-style row) --------------
-    # Only the text input changes here: a text field + send button in one
-    # row, instead of the fixed chat_input. The voice section above is
-    # untouched, and sending still goes through the plain _respond().
-    # This isolates the callback/columns change: if Cloud hangs after
-    # this step, the culprit is this pattern, not the mic.
     def _queue_typed() -> None:
         """Move the current text into wa_pending and clear the box.
 
@@ -290,7 +274,11 @@ def main() -> None:
             st.session_state.wa_last_sent = text
             st.session_state.wa_typed = ""
 
-    col_text, col_send = st.columns([9, 1])
+    if voice_on:
+        col_text, col_mic, col_send = st.columns([6, 2, 1])
+    else:
+        col_text, col_send = st.columns([9, 1])
+        col_mic = None
     with col_text:
         st.text_input(
             "Message",
@@ -299,6 +287,24 @@ def main() -> None:
             key="wa_typed",
             on_change=_queue_typed,
         )
+    if col_mic is not None:
+        with col_mic:
+            audio = st.audio_input("🎙️", label_visibility="collapsed", key="wa_mic")
+        if audio is not None:
+            raw = audio.getvalue()
+            digest = hashlib.sha256(raw).hexdigest()
+            if digest != st.session_state.last_audio_hash:
+                st.session_state.last_audio_hash = digest
+                st.session_state.status = "Listening…"
+                try:
+                    with st.spinner("Listening…"):
+                        heard = transcribe_audio(raw, groq_key=groq_key)
+                except Exception as exc:  # noqa: BLE001
+                    st.error(str(exc))
+                else:
+                    if heard:
+                        _respond(heard)
+                st.rerun()
     with col_send:
         st.button(
             "➤",
