@@ -107,8 +107,19 @@ def _sensenova_request(payload: dict, explicit_key: str | None, timeout: int):
     if key:
         req.add_header("Authorization", f"Bearer {key}")
     else:
-        sys.path.insert(0, DYNAMIC_CREDENTIALS_DIR)
-        from dynamic_credentials import add_surrogate_to_request
+        # Local-VM path only: the stored-credential surrogate helper lives
+        # on this VM (/opt/muse/skills/...) and does NOT exist on Streamlit
+        # Cloud. There the key must come from Streamlit Secrets, so a
+        # missing helper here means the key was never configured — say so
+        # plainly instead of leaking a confusing import error to the user.
+        try:
+            sys.path.insert(0, DYNAMIC_CREDENTIALS_DIR)
+            from dynamic_credentials import add_surrogate_to_request
+        except ImportError as exc:
+            raise RuntimeError(
+                "SenseNova API key is not configured. Add SENSENOVA_API_KEY "
+                "to the app's Streamlit Secrets and redeploy."
+            ) from exc
 
         add_surrogate_to_request(
             req, SENSENOVA_CREDENTIAL, allowed_hosts=[SENSENOVA_HOST]
