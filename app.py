@@ -69,6 +69,13 @@ def _init_state() -> None:
     st.session_state.setdefault("closed", False)
     st.session_state.setdefault("status", "Ready")
     st.session_state.setdefault("last_audio_hash", "")
+    # Mic reset counter: the audio_input widget keeps its recorded audio as
+    # its value after a recording, and re-using it then lands in the
+    # widget's "An error has occurred, please try again." state instead of
+    # a clean recorder. Bumping this counter changes the widget's key after
+    # every processed recording, so Streamlit mounts a brand-new recorder
+    # — the button looks exactly like the first time, every time.
+    st.session_state.setdefault("wa_mic_nonce", 0)
     # Step-1 input row (see below): last text sent, and text queued by the
     # Enter/button callbacks for the plain _respond() send.
     st.session_state.setdefault("wa_last_sent", "")
@@ -227,6 +234,7 @@ def main() -> None:
         if st.button("🗑️ Clear chat"):
             st.session_state.messages = []
             st.session_state.last_audio_hash = ""
+            st.session_state.wa_mic_nonce += 1
             st.rerun()
 
     # --- Transcript -----------------------------------------------------
@@ -289,7 +297,15 @@ def main() -> None:
         )
     if col_mic is not None:
         with col_mic:
-            audio = st.audio_input("🎙️", label_visibility="collapsed", key="wa_mic")
+            # Fresh key per recording (wa_mic_nonce): after a recording is
+            # processed the counter is bumped below, so the next run mounts
+            # a brand-new recorder instead of re-using the stale one that
+            # ends up in the "An error has occurred" state.
+            audio = st.audio_input(
+                "🎙️",
+                label_visibility="collapsed",
+                key=f"wa_mic_{st.session_state.wa_mic_nonce}",
+            )
         if audio is not None:
             raw = audio.getvalue()
             digest = hashlib.sha256(raw).hexdigest()
@@ -304,6 +320,9 @@ def main() -> None:
                 else:
                     if heard:
                         _respond(heard)
+                # Reset the recorder for the next use: a fresh widget key
+                # so the mic button looks exactly like the first time.
+                st.session_state.wa_mic_nonce += 1
                 st.rerun()
     with col_send:
         st.button(
