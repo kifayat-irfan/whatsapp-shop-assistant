@@ -256,6 +256,31 @@ def main() -> None:
     # the audio_input-in-columns placement; if it answers, the full row is
     # safe (the earlier hang then points at the resumable-reply logic,
     # which is NOT present here).
+    #
+    # Compact mic button: the native recorder renders as a tall, wide box
+    # (waveform + 00:00 timer), much bigger than the send button. Hide the
+    # waveform + timer and centre the round record button, so the mic is
+    # the same height as the text field and send button. The record button
+    # still turns into a stop button while recording, so the recording
+    # state stays visible; the reply players (stAudio) are untouched.
+    st.markdown(
+        """
+        <style>
+        [data-testid="stAudioInput"] > div {
+            min-height: 40px !important;
+            height: 40px !important;
+            padding-top: 0 !important;
+            padding-bottom: 0 !important;
+            justify-content: center !important;
+        }
+        [data-testid="stAudioInputWaveSurfer"],
+        [data-testid="stAudioInputWaveformTimeCode"] {
+            display: none !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
     groq_key = _secret("GROQ_API_KEY")
     voice_on = groq_key_available(groq_key)
     if not voice_on:
@@ -283,7 +308,7 @@ def main() -> None:
             st.session_state.wa_typed = ""
 
     if voice_on:
-        col_text, col_mic, col_send = st.columns([6, 2, 1])
+        col_text, col_mic, col_send = st.columns([7, 1, 1])
     else:
         col_text, col_send = st.columns([9, 1])
         col_mic = None
