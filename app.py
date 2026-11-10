@@ -21,7 +21,6 @@ import hashlib
 from datetime import datetime
 
 import streamlit as st
-from streamlit_mic_recorder import mic_recorder
 
 from agent import (
     chat_reply,
@@ -320,7 +319,7 @@ def main() -> None:
             st.session_state.wa_typed = ""
 
     if voice_on:
-        col_text, col_mic, col_send = st.columns([7, 1, 1])
+        col_text, col_mic, col_send = st.columns([6, 2, 1])
     else:
         col_text, col_send = st.columns([9, 1])
         col_mic = None
@@ -334,15 +333,13 @@ def main() -> None:
         )
     if col_mic is not None:
         with col_mic:
-            audio = mic_recorder(
-                start_prompt="🎙️",
-                stop_prompt="⏹️",
-                format="wav",
-                just_once=True,
-                key="wa_mic",
-            )
+            # Native Streamlit audio input (no third-party component): the
+            # mic-recorder component's iframe broke the Cloud session —
+            # runs completed server-side but the UI never updated — so the
+            # mic is the built-in recorder instead, in the same row.
+            audio = st.audio_input("🎙️", label_visibility="collapsed", key="wa_mic")
         if audio is not None:
-            raw = audio["bytes"]
+            raw = audio.getvalue()
             digest = hashlib.sha256(raw).hexdigest()
             if digest != st.session_state.last_audio_hash:
                 st.session_state.last_audio_hash = digest
