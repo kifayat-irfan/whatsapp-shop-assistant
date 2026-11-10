@@ -21,6 +21,7 @@ import hashlib
 from datetime import datetime
 
 import streamlit as st
+from streamlit_mic_recorder import mic_recorder
 
 from agent import (
     chat_reply,
@@ -69,6 +70,8 @@ def _init_state() -> None:
     st.session_state.setdefault("closed", False)
     st.session_state.setdefault("status", "Ready")
     st.session_state.setdefault("last_audio_hash", "")
+    st.session_state.setdefault("wa_last_sent", "")
+    st.session_state.setdefault("wa_pending", "")
     # Last confirmed order (with totals), kept in session state so the
     # confirmation card survives Streamlit reruns (a bare st.success()
     # vanishes on rerun).
@@ -236,13 +239,59 @@ def main() -> None:
                     autoplay=True,
                 )
 
-    # --- Voice input (optional: needs a Groq key) ----------------------
+    # --- Message input row, WhatsApp-style --------------------------------
+    # One row: text field | mic button | send button. The mic is a small
+    # round record button sitting next to the message box, like WhatsApp —
+    # not a separate "Speak to the assistant" section above the chat.
     groq_key = _secret("GROQ_API_KEY")
     voice_on = groq_key_available(groq_key)
+    if not voice_on:
+        st.info(
+            "Voice input needs a Groq API key, which is not configured on this VM — "
+            "so the microphone is off. Type your message below instead: the assistant "
+            "works fully in text mode, with the same voice replies."
+        )
+
+    def _queue_typed() -> None:
+        """Move the current text into wa_pending and clear the box.
+
+        Runs as an on_change/on_click callback — i.e. before the text_input
+        widget is instantiated — which is the only point where Streamlit
+        allows a widget's session-state value to be changed.
+        """
+        text = (st.session_state.get("wa_typed") or "").strip()
+        if (
+            text
+            and text != st.session_state.wa_last_sent
+            and not st.session_state.get("wa_pending")
+        ):
+            st.session_state.wa_pending = text
+            st.session_state.wa_last_sent = text
+            st.session_state.wa_typed = ""
+
     if voice_on:
-        audio = st.audio_input("🎙️ Speak to the assistant")
+        col_text, col_mic, col_send = st.columns([7, 1, 1])
+    else:
+        col_text, col_send = st.columns([9, 1])
+        col_mic = None
+    with col_text:
+        st.text_input(
+            "Message",
+            placeholder="Type your message to SliceHouse Pizza…",
+            label_visibility="collapsed",
+            key="wa_typed",
+            on_change=_queue_typed,
+        )
+    if col_mic is not None:
+        with col_mic:
+            audio = mic_recorder(
+                start_prompt="🎙️",
+                stop_prompt="⏹️",
+                format="wav",
+                key="wa_mic",
+            )
         if audio is not None:
-            raw = audio.getvalue()
+            raw = audio["bytes"]
             digest = hashlib.sha256(raw).hexdigest()
             if digest != st.session_state.last_audio_hash:
                 st.session_state.last_audio_hash = digest
@@ -256,17 +305,20 @@ def main() -> None:
                     if heard:
                         _respond(heard)
                 st.rerun()
-    else:
-        st.info(
-            "Voice input needs a Groq API key, which is not configured on this VM — "
-            "so the microphone is off. Type your message below instead: the assistant "
-            "works fully in text mode, with the same voice replies."
+    with col_send:
+        st.button(
+            "➤",
+            key="wa_send",
+            help="Send message",
+            use_container_width=True,
+            on_click=_queue_typed,
         )
 
-    # --- Text input (complete path, always available) -------------------
-    typed = st.chat_input("Type your message to SliceHouse Pizza…")
-    if typed:
-        _respond(typed)
+    # Send the queued text once (Enter in the text field, or the ➤ button).
+    pending = st.session_state.get("wa_pending")
+    if pending:
+        st.session_state.wa_pending = ""
+        _respond(pending)
         st.rerun()
 
     # --- Order confirmation card (persistent) ---------------------------
