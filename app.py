@@ -252,23 +252,21 @@ def main() -> None:
             st.session_state.wa_mic_nonce += 1
             st.rerun()
 
-        # --- Menu with photos --------------------------------------------
+        # --- Menu (text only) ------------------------------------------------
         # Prices come straight from knowledge_base (PIZZAS/SIDES/DRINKS/
-        # DESSERTS) — the app never invents a dish or a price.
+        # DESSERTS) — the app never invents a dish or a price. No photos
+        # here: the user did not like the sidebar images (2026-11-10), so
+        # the menu stays text-only. The hero banner in the main area is
+        # the only image on the page.
         st.markdown("---")
         st.subheader("📋 Menu")
         for name, sizes in PIZZAS.items():
-            slug = name.lower().replace(" ", "-")
-            st.image(
-                str(ASSETS_DIR / f"pizza-{slug}.jpg"), use_container_width=True
-            )
             prices = " · ".join(
                 f"{size} ${price:.2f}" for size, price in sizes.items()
             )
             st.write(f"**{name}** — {prices}")
             if name in SOLD_OUT:
                 st.write("🔴 **Sold out today**")
-        st.image(str(ASSETS_DIR / "sides.jpg"), use_container_width=True)
         st.write("**Sides**")
         for name, price in SIDES.items():
             st.write(f"{name} — ${price:.2f}")
