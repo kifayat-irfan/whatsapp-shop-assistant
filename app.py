@@ -179,7 +179,11 @@ def _order_summary_rows(order: dict) -> list[dict]:
         label = (item.get("size") + " " if item.get("size") else "") + item["name"]
         rows.append({
             "Item": label,
-            "Qty": item["qty"],
+            # Qty must stay a string: the Subtotal/Delivery/Total rows use ""
+            # and a mixed int+str column makes pyarrow fail Arrow conversion
+            # (Streamlit auto-fixes it, but logs an ArrowInvalid traceback
+            # on every render).
+            "Qty": str(item["qty"]),
             "Price": f"${price:.2f}",
             "Line total": f"${price * item['qty']:.2f}",
         })
