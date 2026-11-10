@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import datetime
+from pathlib import Path
 
 import streamlit as st
 
@@ -30,9 +31,14 @@ from agent import (
 )
 from knowledge_base import (
     DELIVERY_ETA,
+    DESSERTS,
+    DRINKS,
     PICKUP_ETA,
+    PIZZAS,
     PREORDER_ETA,
     SHOP_NAME,
+    SIDES,
+    SOLD_OUT,
     compute_totals,
     format_order_id,
     next_order_id,
@@ -40,6 +46,8 @@ from knowledge_base import (
 )
 
 PAGE_TITLE = "SliceHouse Pizza — WhatsApp Shop Assistant (Demo)"
+
+ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 
 WHATSAPP_CSS = """
 <style>
@@ -210,6 +218,9 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
+    # --- Hero banner ------------------------------------------------------
+    st.image(str(ASSETS_DIR / "hero.jpg"), use_container_width=True)
+
     st.write(f"**Assistant status:** {st.session_state.status}")
 
     # --- Sidebar: hours, delivery info, closed toggle -------------------
@@ -240,6 +251,33 @@ def main() -> None:
             st.session_state.last_audio_hash = ""
             st.session_state.wa_mic_nonce += 1
             st.rerun()
+
+        # --- Menu with photos --------------------------------------------
+        # Prices come straight from knowledge_base (PIZZAS/SIDES/DRINKS/
+        # DESSERTS) — the app never invents a dish or a price.
+        st.markdown("---")
+        st.subheader("📋 Menu")
+        for name, sizes in PIZZAS.items():
+            slug = name.lower().replace(" ", "-")
+            st.image(
+                str(ASSETS_DIR / f"pizza-{slug}.jpg"), use_container_width=True
+            )
+            prices = " · ".join(
+                f"{size} ${price:.2f}" for size, price in sizes.items()
+            )
+            st.write(f"**{name}** — {prices}")
+            if name in SOLD_OUT:
+                st.write("🔴 **Sold out today**")
+        st.image(str(ASSETS_DIR / "sides.jpg"), use_container_width=True)
+        st.write("**Sides**")
+        for name, price in SIDES.items():
+            st.write(f"{name} — ${price:.2f}")
+        st.write("**Drinks**")
+        for name, price in DRINKS.items():
+            st.write(f"{name} — ${price:.2f}")
+        st.write("**Desserts**")
+        for name, price in DESSERTS.items():
+            st.write(f"{name} — ${price:.2f}")
 
     # --- Transcript -----------------------------------------------------
     for msg in st.session_state.messages:
