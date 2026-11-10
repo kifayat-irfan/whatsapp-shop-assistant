@@ -86,7 +86,12 @@ def _items_text(items: list[dict]) -> str:
 
 
 def _respond(user_text: str) -> None:
-    """Run one full turn: LLM reply, voice synthesis, order capture."""
+    """Run one full turn: LLM reply, voice synthesis, order capture.
+
+    Stage prints go to stdout (visible in the Streamlit Cloud logs) so a
+    hung reply can be located: the last printed stage is where it stuck.
+    """
+    print(f"[shop] respond start: {user_text[:60]!r}", flush=True)
     st.session_state.messages.append({"role": "user", "content": user_text})
     history = [
         {"role": m["role"], "content": m["content"]}
@@ -98,13 +103,16 @@ def _respond(user_text: str) -> None:
     st.session_state.status = "Thinking…"
     try:
         with st.spinner("Thinking…"):
+            print("[shop] llm start", flush=True)
             display, order = chat_reply(
                 history,
                 closed=st.session_state.closed,
                 open_orders=open_orders,
                 sensenova_key=_secret("SENSENOVA_API_KEY"),
             )
+            print("[shop] llm done", flush=True)
     except Exception as exc:  # noqa: BLE001 - show the failure, keep the chat alive
+        print(f"[shop] llm FAILED: {exc}", flush=True)
         st.session_state.messages.append(
             {"role": "assistant", "content": f"Sorry, I had trouble reaching the assistant just now ({exc}). Please try again."}
         )
@@ -116,8 +124,11 @@ def _respond(user_text: str) -> None:
     st.session_state.status = "Speaking…"
     try:
         with st.spinner("Speaking…"):
+            print("[shop] tts start", flush=True)
             audio_bytes, audio_format = synthesize_speech(display)
-    except Exception:  # noqa: BLE001 - text reply still stands without audio
+            print("[shop] tts done", flush=True)
+    except Exception as exc:  # noqa: BLE001 - text reply still stands without audio
+        print(f"[shop] tts FAILED: {exc}", flush=True)
         audio_bytes = None
 
     st.session_state.messages.append(
@@ -159,6 +170,7 @@ def _respond(user_text: str) -> None:
             st.session_state.orders.append(record)
             st.session_state.last_order = record
     st.session_state.status = "Ready"
+    print("[shop] reply appended, status Ready", flush=True)
 
 
 def _order_summary_rows(order: dict) -> list[dict]:
@@ -288,6 +300,7 @@ def main() -> None:
                 start_prompt="🎙️",
                 stop_prompt="⏹️",
                 format="wav",
+                just_once=True,
                 key="wa_mic",
             )
         if audio is not None:
