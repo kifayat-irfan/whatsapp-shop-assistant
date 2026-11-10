@@ -69,12 +69,6 @@ def _init_state() -> None:
     st.session_state.setdefault("closed", False)
     st.session_state.setdefault("status", "Ready")
     st.session_state.setdefault("last_audio_hash", "")
-    st.session_state.setdefault("wa_last_sent", "")
-    st.session_state.setdefault("wa_pending", "")
-    # Index of the latest assistant message still awaiting its voice
-    # reply (None when none is pending). Lets _complete_reply() resume a
-    # voice synthesis that a rerun interrupted.
-    st.session_state.setdefault("pending_tts", None)
     # Last confirmed order (with totals), kept in session state so the
     # confirmation card survives Streamlit reruns (a bare st.success()
     # vanishes on rerun).
@@ -89,120 +83,79 @@ def _items_text(items: list[dict]) -> str:
 
 
 def _respond(user_text: str) -> None:
-    """Append the user's message and answer it (see _complete_reply)."""
-    print(f"[shop] respond start: {user_text[:60]!r}", flush=True)
+    """Run one full turn: LLM reply, voice synthesis, order capture."""
     st.session_state.messages.append({"role": "user", "content": user_text})
-    _complete_reply()
-
-
-def _complete_reply() -> None:
-    """Answer the latest user message and attach its voice reply.
-
-    Idempotent and resumable: safe to call on every run. A Streamlit
-    rerun can interrupt a long reply mid-flight (on Cloud the reply was
-    cut off right after the LLM finished, leaving the app wedged on
-    "Thinking…" with no error). If that happens, the next run resumes
-    where it stopped: the user message is already in history, the text
-    reply is appended BEFORE voice synthesis starts, and a pending voice
-    is tracked by index — so an interruption during the LLM call re-runs
-    it, and an interruption during voice synthesis re-attaches the audio
-    to the already-visible text.
-    """
-    msgs = st.session_state.messages
-
-    # --- 1. Text reply (only if the last message is unanswered) --------
-    if msgs and msgs[-1]["role"] == "user":
-        history = [
-            {"role": m["role"], "content": m["content"]} for m in msgs
-        ]
-        open_orders = [
-            o for o in st.session_state.orders
-            if o["status"] in ("Preparing", "Pre-order")
-        ]
-        st.session_state.status = "Thinking…"
-        try:
-            with st.spinner("Thinking…"):
-                print("[shop] llm start", flush=True)
-                display, order = chat_reply(
-                    history,
-                    closed=st.session_state.closed,
-                    open_orders=open_orders,
-                    sensenova_key=_secret("SENSENOVA_API_KEY"),
-                )
-                print("[shop] llm done", flush=True)
-        except Exception as exc:  # noqa: BLE001 - show the failure, keep the chat alive
-            print(f"[shop] llm FAILED: {exc}", flush=True)
-            msgs.append(
-                {"role": "assistant", "content": f"Sorry, I had trouble reaching the assistant just now ({exc}). Please try again."}
+    history = [
+        {"role": m["role"], "content": m["content"]}
+        for m in st.session_state.messages
+    ]
+    open_orders = [
+        o for o in st.session_state.orders if o["status"] in ("Preparing", "Pre-order")
+    ]
+    st.session_state.status = "Thinking…"
+    try:
+        with st.spinner("Thinking…"):
+            display, order = chat_reply(
+                history,
+                closed=st.session_state.closed,
+                open_orders=open_orders,
+                sensenova_key=_secret("SENSENOVA_API_KEY"),
             )
-            st.session_state.status = "Ready"
-            return
-
-        # Text FIRST: it is visible even if voice synthesis is cut off.
-        msgs.append(
-            {"role": "assistant", "content": display, "audio": None,
-             "audio_format": "audio/mp3"}
+    except Exception as exc:  # noqa: BLE001 - show the failure, keep the chat alive
+        st.session_state.messages.append(
+            {"role": "assistant", "content": f"Sorry, I had trouble reaching the assistant just now ({exc}). Please try again."}
         )
-        if order:
-            totals = compute_totals(order["items"], order["type"])
-            # Same customer re-confirming the same order must not create a
-            # duplicate row.
-            existing = None
-            for candidate in st.session_state.orders:
-                if same_order(candidate, order):
-                    existing = candidate
-                    break
-            if existing is not None:
-                st.session_state.last_order = existing
-            else:
-                number = next_order_id([o["number"] for o in st.session_state.orders])
-                preorder = bool(order.get("preorder")) or st.session_state.closed
-                record = {
-                    "number": number,
-                    "id": format_order_id(number),
-                    "name": order["name"],
-                    "phone": order["phone"],
-                    "type": order["type"],
-                    "address": order["address"],
-                    "items": order["items"],
-                    "items_text": _items_text(order["items"]),
-                    "subtotal": totals["subtotal"],
-                    "delivery_fee": totals["delivery_fee"],
-                    "total": totals["total"],
-                    "status": "Pre-order" if preorder else "Preparing",
-                    "eta": PREORDER_ETA if preorder else (
-                        DELIVERY_ETA if order["type"] == "delivery" else PICKUP_ETA
-                    ),
-                    "placed_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                }
-                st.session_state.orders.append(record)
-                st.session_state.last_order = record
-        st.session_state.pending_tts = len(msgs) - 1
         st.session_state.status = "Ready"
-        print("[shop] reply appended, status Ready", flush=True)
+        return
 
-    # --- 2. Voice for the latest assistant message, if still pending ----
-    idx = st.session_state.get("pending_tts")
-    if (
-        idx is not None
-        and 0 <= idx < len(msgs)
-        and msgs[idx].get("audio") is None
-    ):
-        # Clear first: a voice failure must not loop back here forever.
-        st.session_state.pending_tts = None
-        st.session_state.status = "Speaking…"
-        try:
-            with st.spinner("Speaking…"):
-                print("[shop] tts start", flush=True)
-                audio_bytes, audio_format = synthesize_speech(msgs[idx]["content"])
-                print("[shop] tts done", flush=True)
-        except Exception as exc:  # noqa: BLE001 - text reply still stands without audio
-            print(f"[shop] tts FAILED: {exc}", flush=True)
-            audio_bytes = None
-        if audio_bytes:
-            msgs[idx]["audio"] = audio_bytes
-            msgs[idx]["audio_format"] = audio_format
-        st.session_state.status = "Ready"
+    audio_bytes = None
+    audio_format = "audio/mp3"
+    st.session_state.status = "Speaking…"
+    try:
+        with st.spinner("Speaking…"):
+            audio_bytes, audio_format = synthesize_speech(display)
+    except Exception:  # noqa: BLE001 - text reply still stands without audio
+        audio_bytes = None
+
+    st.session_state.messages.append(
+        {"role": "assistant", "content": display, "audio": audio_bytes,
+         "audio_format": audio_format}
+    )
+    if order:
+        totals = compute_totals(order["items"], order["type"])
+        # Same customer re-confirming the same order must not create a
+        # duplicate row.
+        existing = None
+        for candidate in st.session_state.orders:
+            if same_order(candidate, order):
+                existing = candidate
+                break
+        if existing is not None:
+            st.session_state.last_order = existing
+        else:
+            number = next_order_id([o["number"] for o in st.session_state.orders])
+            preorder = bool(order.get("preorder")) or st.session_state.closed
+            record = {
+                "number": number,
+                "id": format_order_id(number),
+                "name": order["name"],
+                "phone": order["phone"],
+                "type": order["type"],
+                "address": order["address"],
+                "items": order["items"],
+                "items_text": _items_text(order["items"]),
+                "subtotal": totals["subtotal"],
+                "delivery_fee": totals["delivery_fee"],
+                "total": totals["total"],
+                "status": "Pre-order" if preorder else "Preparing",
+                "eta": PREORDER_ETA if preorder else (
+                    DELIVERY_ETA if order["type"] == "delivery" else PICKUP_ETA
+                ),
+                "placed_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            }
+            st.session_state.orders.append(record)
+            st.session_state.last_order = record
+    st.session_state.status = "Ready"
 
 
 def _order_summary_rows(order: dict) -> list[dict]:
@@ -283,61 +236,11 @@ def main() -> None:
                     autoplay=True,
                 )
 
-    # Resume a reply that a rerun interrupted mid-flight (see
-    # _complete_reply): an unanswered user message gets its answer now,
-    # and a text reply still awaiting its voice gets the audio attached.
-    _complete_reply()
-
-    # --- Message input row, WhatsApp-style --------------------------------
-    # One row: text field | mic button | send button. The mic is a small
-    # round record button sitting next to the message box, like WhatsApp —
-    # not a separate "Speak to the assistant" section above the chat.
+    # --- Voice input (optional: needs a Groq key) ----------------------
     groq_key = _secret("GROQ_API_KEY")
     voice_on = groq_key_available(groq_key)
-    if not voice_on:
-        st.info(
-            "Voice input needs a Groq API key, which is not configured on this VM — "
-            "so the microphone is off. Type your message below instead: the assistant "
-            "works fully in text mode, with the same voice replies."
-        )
-
-    def _queue_typed() -> None:
-        """Move the current text into wa_pending and clear the box.
-
-        Runs as an on_change/on_click callback — i.e. before the text_input
-        widget is instantiated — which is the only point where Streamlit
-        allows a widget's session-state value to be changed.
-        """
-        text = (st.session_state.get("wa_typed") or "").strip()
-        if (
-            text
-            and text != st.session_state.wa_last_sent
-            and not st.session_state.get("wa_pending")
-        ):
-            st.session_state.wa_pending = text
-            st.session_state.wa_last_sent = text
-            st.session_state.wa_typed = ""
-
     if voice_on:
-        col_text, col_mic, col_send = st.columns([6, 2, 1])
-    else:
-        col_text, col_send = st.columns([9, 1])
-        col_mic = None
-    with col_text:
-        st.text_input(
-            "Message",
-            placeholder="Type your message to SliceHouse Pizza…",
-            label_visibility="collapsed",
-            key="wa_typed",
-            on_change=_queue_typed,
-        )
-    if col_mic is not None:
-        with col_mic:
-            # Native Streamlit audio input (no third-party component): the
-            # mic-recorder component's iframe broke the Cloud session —
-            # runs completed server-side but the UI never updated — so the
-            # mic is the built-in recorder instead, in the same row.
-            audio = st.audio_input("🎙️", label_visibility="collapsed", key="wa_mic")
+        audio = st.audio_input("🎙️ Speak to the assistant")
         if audio is not None:
             raw = audio.getvalue()
             digest = hashlib.sha256(raw).hexdigest()
@@ -353,20 +256,17 @@ def main() -> None:
                     if heard:
                         _respond(heard)
                 st.rerun()
-    with col_send:
-        st.button(
-            "➤",
-            key="wa_send",
-            help="Send message",
-            use_container_width=True,
-            on_click=_queue_typed,
+    else:
+        st.info(
+            "Voice input needs a Groq API key, which is not configured on this VM — "
+            "so the microphone is off. Type your message below instead: the assistant "
+            "works fully in text mode, with the same voice replies."
         )
 
-    # Send the queued text once (Enter in the text field, or the ➤ button).
-    pending = st.session_state.get("wa_pending")
-    if pending:
-        st.session_state.wa_pending = ""
-        _respond(pending)
+    # --- Text input (complete path, always available) -------------------
+    typed = st.chat_input("Type your message to SliceHouse Pizza…")
+    if typed:
+        _respond(typed)
         st.rerun()
 
     # --- Order confirmation card (persistent) ---------------------------
