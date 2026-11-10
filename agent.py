@@ -516,13 +516,20 @@ def _piper_model_path() -> str:
 
 
 def _ensure_piper_model() -> str:
-    """Local Piper voice model; downloads it from HuggingFace if missing."""
+    """Local Piper voice model; downloads it from HuggingFace if missing.
+
+    The download timeout is deliberately short (60s): on 2026-11-10 a
+    stalled 61MB download on Streamlit Cloud blocked the text reply for
+    5+ minutes, because the reply waits for voice synthesis. The model
+    files are therefore also tracked in the repo (see .gitignore), so a
+    fresh deploy already has them and never downloads mid-reply.
+    """
     path = _piper_model_path()
     if os.path.exists(path) and os.path.exists(path + ".json"):
         return path
     os.makedirs(os.path.dirname(path), exist_ok=True)
     for url, dest in ((PIPER_MODEL_URL, path), (PIPER_CONFIG_URL, path + ".json")):
-        resp = requests.get(url, timeout=300)
+        resp = requests.get(url, timeout=60)
         resp.raise_for_status()
         with open(dest, "wb") as handle:
             handle.write(resp.content)

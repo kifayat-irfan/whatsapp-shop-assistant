@@ -3,5 +3,11 @@ __pycache__/
 *.pyc
 demo/
 server.log
-voices/
+# Piper voice model: the two model files are intentionally TRACKED so a
+# fresh Streamlit Cloud deploy already has them — a mid-reply download
+# stalled the assistant for 5+ minutes on 2026-11-10. Anything else
+# under voices/ stays ignored.
+voices/*
+!voices/en_US-amy-medium.onnx
+!voices/en_US-amy-medium.onnx.json
 .streamlit/secrets.toml
