@@ -69,6 +69,10 @@ def _init_state() -> None:
     st.session_state.setdefault("closed", False)
     st.session_state.setdefault("status", "Ready")
     st.session_state.setdefault("last_audio_hash", "")
+    # Step-1 input row (see below): last text sent, and text queued by the
+    # Enter/button callbacks for the plain _respond() send.
+    st.session_state.setdefault("wa_last_sent", "")
+    st.session_state.setdefault("wa_pending", "")
     # Last confirmed order (with totals), kept in session state so the
     # confirmation card survives Streamlit reruns (a bare st.success()
     # vanishes on rerun).
@@ -263,10 +267,52 @@ def main() -> None:
             "works fully in text mode, with the same voice replies."
         )
 
-    # --- Text input (complete path, always available) -------------------
-    typed = st.chat_input("Type your message to SliceHouse Pizza…")
-    if typed:
-        _respond(typed)
+    # --- Text input row (Step 1 of the WhatsApp-style row) --------------
+    # Only the text input changes here: a text field + send button in one
+    # row, instead of the fixed chat_input. The voice section above is
+    # untouched, and sending still goes through the plain _respond().
+    # This isolates the callback/columns change: if Cloud hangs after
+    # this step, the culprit is this pattern, not the mic.
+    def _queue_typed() -> None:
+        """Move the current text into wa_pending and clear the box.
+
+        Runs as an on_change/on_click callback — i.e. before the text_input
+        widget is instantiated — which is the only point where Streamlit
+        allows a widget's session-state value to be changed.
+        """
+        text = (st.session_state.get("wa_typed") or "").strip()
+        if (
+            text
+            and text != st.session_state.wa_last_sent
+            and not st.session_state.get("wa_pending")
+        ):
+            st.session_state.wa_pending = text
+            st.session_state.wa_last_sent = text
+            st.session_state.wa_typed = ""
+
+    col_text, col_send = st.columns([9, 1])
+    with col_text:
+        st.text_input(
+            "Message",
+            placeholder="Type your message to SliceHouse Pizza…",
+            label_visibility="collapsed",
+            key="wa_typed",
+            on_change=_queue_typed,
+        )
+    with col_send:
+        st.button(
+            "➤",
+            key="wa_send",
+            help="Send message",
+            use_container_width=True,
+            on_click=_queue_typed,
+        )
+
+    # Send the queued text once (Enter in the text field, or the ➤ button).
+    pending = st.session_state.get("wa_pending")
+    if pending:
+        st.session_state.wa_pending = ""
+        _respond(pending)
         st.rerun()
 
     # --- Order confirmation card (persistent) ---------------------------
